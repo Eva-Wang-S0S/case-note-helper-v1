@@ -603,6 +603,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_plan_item_fails_with_nonexistent_case() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let state = TestState::new(db_path.to_str().unwrap());
+        init_schema(&state.db.lock().unwrap());
+
+        // FK constraint violation — case_id 999 does not exist
+        let result = test_create_plan_item(&state, 999, "This should fail", None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("FOREIGN KEY") || err.contains("constraint"), "Expected FK error, got: {}", err);
+    }
+
+    #[tokio::test]
     async fn toggle_plan_item_flips_completed_state() {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
@@ -632,6 +646,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn toggle_plan_item_returns_error_for_nonexistent_item() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let state = TestState::new(db_path.to_str().unwrap());
+        init_schema(&state.db.lock().unwrap());
+
+        let now = chrono_now();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO cases (name, client_name, stage, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)",
+                params!["Test Case", "Test Client", "intake", &now, &now],
+            ).unwrap();
+        }
+
+        // No plan items exist — toggling non-existent ID should fail on query_row
+        let result = test_toggle_plan_item(&state, 999).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn delete_plan_item_removes_from_database() {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
@@ -658,6 +693,28 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM plan_items WHERE id = 1", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn delete_plan_item_succeeds_for_nonexistent_item() {
+        // delete_plan_item doesn't error on 0 rows affected — this is intentional
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let state = TestState::new(db_path.to_str().unwrap());
+        init_schema(&state.db.lock().unwrap());
+
+        let now = chrono_now();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO cases (name, client_name, stage, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)",
+                params!["Test Case", "Test Client", "intake", &now, &now],
+            ).unwrap();
+        }
+
+        // Deleting non-existent item should succeed (idempotent delete)
+        let result = test_delete_plan_item(&state, 999).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -734,6 +791,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_plan_items_returns_empty_for_no_items() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let state = TestState::new(db_path.to_str().unwrap());
+        init_schema(&state.db.lock().unwrap());
+
+        let now = chrono_now();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO cases (name, client_name, stage, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)",
+                params!["Test Case", "Test Client", "intake", &now, &now],
+            ).unwrap();
+        }
+
+        let items = test_get_plan_items(&state, 1).await.unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[tokio::test]
     async fn search_archive_returns_matching_cases() {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
@@ -760,5 +837,25 @@ mod tests {
         let results2 = test_search_archive(&state, "Jones").await.unwrap();
         assert_eq!(results2.len(), 1);
         assert_eq!(results2[0].name, "Jones Case");
+    }
+
+    #[tokio::test]
+    async fn search_archive_returns_empty_for_no_matches() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let state = TestState::new(db_path.to_str().unwrap());
+        init_schema(&state.db.lock().unwrap());
+
+        let now = chrono_now();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO cases (name, client_name, stage, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)",
+                params!["Smith Family", "Alice Smith", "assessment", &now, &now],
+            ).unwrap();
+        }
+
+        let results = test_search_archive(&state, "NoMatch").await.unwrap();
+        assert!(results.is_empty());
     }
 }
