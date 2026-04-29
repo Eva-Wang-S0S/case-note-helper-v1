@@ -42,9 +42,11 @@ async fn get_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
 #[tauri::command]
 async fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut settings_lock = state.settings.write().await;
-    *settings_lock = settings;
-    Ok(())
+    {
+        let mut settings_lock = state.settings.write().await;
+        *settings_lock = settings.clone();
+    }
+    db::save_settings_to_db(&state, &settings).await
 }
 
 #[tauri::command]
@@ -71,29 +73,25 @@ async fn draft_case_note(
 #[tauri::command]
 async fn get_cases(app: tauri::AppHandle) -> Result<Vec<Case>, String> {
     let state = app.state::<AppState>();
-    db::get_all_cases(&state).await.map_err(|e| e.to_string())
+    db::get_all_cases(&state).await
 }
 
 #[tauri::command]
 async fn get_case(app: tauri::AppHandle, case_id: i64) -> Result<Case, String> {
     let state = app.state::<AppState>();
-    db::get_case(&state, case_id).await.map_err(|e| e.to_string())
+    db::get_case(&state, case_id).await
 }
 
 #[tauri::command]
 async fn create_case(app: tauri::AppHandle, name: String, client_name: String, stage: String) -> Result<Case, String> {
     let state = app.state::<AppState>();
-    db::create_case(&state, &name, &client_name, &stage)
-        .await
-        .map_err(|e| e.to_string())
+    db::create_case(&state, &name, &client_name, &stage).await
 }
 
 #[tauri::command]
 async fn get_notes(app: tauri::AppHandle, case_id: i64) -> Result<Vec<Note>, String> {
     let state = app.state::<AppState>();
-    db::get_notes(&state, case_id)
-        .await
-        .map_err(|e| e.to_string())
+    db::get_notes(&state, case_id).await
 }
 
 #[tauri::command]
@@ -104,25 +102,19 @@ async fn save_note(
     draft_content: Option<String>,
 ) -> Result<Note, String> {
     let state = app.state::<AppState>();
-    db::save_note(&state, case_id, &raw_content, draft_content.as_deref())
-        .await
-        .map_err(|e| e.to_string())
+    db::save_note(&state, case_id, &raw_content, draft_content.as_deref()).await
 }
 
 #[tauri::command]
 async fn search_archive(app: tauri::AppHandle, query: String) -> Result<Vec<Case>, String> {
     let state = app.state::<AppState>();
-    db::search_archive(&state, &query)
-        .await
-        .map_err(|e| e.to_string())
+    db::search_archive(&state, &query).await
 }
 
 #[tauri::command]
 async fn get_plan_items(app: tauri::AppHandle, case_id: i64) -> Result<Vec<PlanItem>, String> {
     let state = app.state::<AppState>();
-    db::get_plan_items(&state, case_id)
-        .await
-        .map_err(|e| e.to_string())
+    db::get_plan_items(&state, case_id).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -138,9 +130,32 @@ pub fn run() {
         )
         .setup(|app| {
             log::info!("Setting up CaseHelper app state");
-            let app_handle = app.handle().clone();
-            let state = AppState::new(app_handle);
+
+            let app_dir = app.path().app_data_dir()
+                .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+            std::fs::create_dir_all(&app_dir)
+                .map_err(|e| format!("Failed to create app data dir: {}", e))?;
+
+            let db_path = app_dir.join("casehelper.db");
+            log::info!("Database path: {:?}", db_path);
+
+            let state = AppState::new(app.handle().clone(), db_path.to_str().unwrap())
+                .map_err(|e| format!("Failed to create app state: {}", e))?;
+
             app.manage(state);
+
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<AppState>();
+                if let Err(e) = db::init_database(&state).await {
+                    log::error!("Failed to initialize database: {}", e);
+                }
+                if let Err(e) = db::load_settings_from_db(&state).await {
+                    log::error!("Failed to load settings from database: {}", e);
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

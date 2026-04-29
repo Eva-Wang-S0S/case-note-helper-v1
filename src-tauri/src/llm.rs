@@ -75,7 +75,7 @@ pub async fn draft_note(
         stream: false,
     };
 
-    let mut url = settings.llm_endpoint.clone();
+    let url = settings.llm_endpoint.clone();
     if url.contains("localhost") || url.contains("127.0.0.1") {
     } else {
         log::warn!("LLM endpoint may not be localhost: {}", url);
