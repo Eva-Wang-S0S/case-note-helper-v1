@@ -63,6 +63,9 @@ interface AppState {
   saveNote: (caseId: number, rawContent: string, draftContent?: string) => Promise<void>;
   draftNote: (rawInput: string, anonymize: boolean) => Promise<string>;
   loadPlanItems: (caseId: number) => Promise<void>;
+  createPlanItem: (caseId: number, content: string, scheduledDate?: string) => Promise<PlanItem>;
+  togglePlanItem: (itemId: number) => Promise<void>;
+  deletePlanItem: (itemId: number) => Promise<void>;
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   searchArchive: (query: string) => Promise<Case[]>;
@@ -108,11 +111,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   createCase: async (name, clientName, stage) => {
     set({ isLoading: true, error: null });
     try {
-      const newCase = await invoke<Case>('create_case', {
-        name,
-        clientName,
-        stage,
-      });
+      const newCase = await invoke<Case>('create_case', { name, clientName, stage });
       set((state) => ({
         cases: [...state.cases, newCase],
         isLoading: false,
@@ -135,11 +134,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   saveNote: async (caseId, rawContent, draftContent) => {
     try {
-      const note = await invoke<Note>('save_note', {
-        caseId,
-        rawContent,
-        draftContent,
-      });
+      const note = await invoke<Note>('save_note', { caseId, rawContent, draftContent });
       set((state) => ({
         notes: state.notes.some((n) => n.id === note.id)
           ? state.notes.map((n) => (n.id === note.id ? note : n))
@@ -153,10 +148,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   draftNote: async (rawInput, anonymize) => {
     set({ isLoading: true, error: null });
     try {
-      const draft = await invoke<string>('draft_case_note', {
-        rawInput,
-        anonymize,
-      });
+      const draft = await invoke<string>('draft_case_note', { rawInput, anonymize });
       set({ isLoading: false });
       return draft;
     } catch (e) {
@@ -171,6 +163,45 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ planItems });
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+
+  createPlanItem: async (caseId, content, scheduledDate) => {
+    try {
+      const item = await invoke<PlanItem>('create_plan_item', {
+        caseId,
+        content,
+        scheduledDate: scheduledDate ?? null,
+      });
+      set((state) => ({ planItems: [...state.planItems, item] }));
+      return item;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  togglePlanItem: async (itemId) => {
+    try {
+      const updated = await invoke<PlanItem>('toggle_plan_item', { itemId });
+      set((state) => ({
+        planItems: state.planItems.map((i) => (i.id === itemId ? updated : i)),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  deletePlanItem: async (itemId) => {
+    try {
+      await invoke('delete_plan_item', { itemId });
+      set((state) => ({
+        planItems: state.planItems.filter((i) => i.id !== itemId),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
     }
   },
 

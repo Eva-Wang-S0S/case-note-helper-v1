@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(mkdir -p ~/.gstack/analytics)",
-      "Bash(echo '{\"skill\":\"office-hours\",\"event\":\"resources_shown\",\"count\":0,\"categories\":\"\",\"ts\":\"2026-04-28T00:00:00Z\"}')"
+      "Bash(echo '{\"skill\":\"office-hours\",\"event\":\"resources_shown\",\"count\":0,\"categories\":\"\",\"ts\":\"2026-04-28T00:00:00Z\"}')",
+      "Bash(npm run *)"
     ]
   }
 }
