@@ -522,6 +522,16 @@ mod tests {
         Ok(items)
     }
 
+    async fn test_get_notes(state: &TestState, case_id: i64) -> Result<Vec<Note>, String> {
+        use super::*;
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = db.prepare("SELECT id, case_id, raw_content, draft_content, created_at, updated_at FROM notes WHERE case_id = ? ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+        let notes = stmt.query_map([case_id], |row| {
+            Ok(Note { id: row.get(0)?, case_id: row.get(1)?, raw_content: row.get(2)?, draft_content: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? })
+        }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+        Ok(notes)
+    }
+
     async fn test_search_archive(state: &TestState, query: &str) -> Result<Vec<Case>, String> {
         use super::*;
         let pattern = format!("%{}%", query);
@@ -535,6 +545,7 @@ mod tests {
         Ok(cases)
     }
 
+    
     fn init_schema(db: &Connection) {
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS cases (
@@ -857,5 +868,72 @@ mod tests {
 
         let results = test_search_archive(&state, "NoMatch").await.unwrap();
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_notes_returns_empty_when_case_has_no_notes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let state = TestState::new(db_path.to_str().unwrap());
+        init_schema(&state.db.lock().unwrap());
+
+        let now = chrono_now();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO cases (name, client_name, stage, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)",
+                params!["Test Case", "Test Client", "intake", &now, &now],
+            ).unwrap();
+        }
+
+        let notes = test_get_notes(&state, 1).await.unwrap();
+        assert!(notes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_notes_returns_multiple_notes_for_case() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let state = TestState::new(db_path.to_str().unwrap());
+        init_schema(&state.db.lock().unwrap());
+
+        let now = chrono_now();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO cases (name, client_name, stage, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)",
+                params!["Test Case", "Test Client", "intake", &now, &now],
+            ).unwrap();
+            db.execute(
+                "INSERT INTO notes (case_id, raw_content, draft_content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                params![1, "First note", Some("Draft 1"), &now, &now],
+            ).unwrap();
+            db.execute(
+                "INSERT INTO notes (case_id, raw_content, draft_content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                params![1, "Second note", None::<String>, &now, &now],
+            ).unwrap();
+        }
+
+        let notes = test_get_notes(&state, 1).await.unwrap();
+        assert_eq!(notes.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn create_plan_item_fails_when_case_id_constraint_violated() {
+        // FK constraint: case_id 999 does not exist
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let state = TestState::new(db_path.to_str().unwrap());
+        init_schema(&state.db.lock().unwrap());
+
+        // Insert plan item with non-existent case — SQLite FK is ON
+        let now = chrono_now();
+        let db = state.db.lock().unwrap();
+        let result = db.execute(
+            "INSERT INTO plan_items (case_id, content, scheduled_date, completed, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)",
+            params![999, "Orphan item", None::<String>, &now, &now],
+        );
+        // FK violation returns error
+        assert!(result.is_err(), "Expected FK constraint error");
     }
 }
