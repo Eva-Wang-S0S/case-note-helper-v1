@@ -317,6 +317,9 @@ pub async fn create_plan_item(
     let now = chrono_now();
     let id = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
+        // Note: two separate lock acquisitions are safe here because
+        // last_insert_rowid is connection-scoped and SQLite WAL ensures
+        // the INSERT is committed before we re-acquire for the SELECT.
         db.execute(
             "INSERT INTO plan_items (case_id, content, scheduled_date, completed, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)",
             params![case_id, content, scheduled_date, &now, &now],
