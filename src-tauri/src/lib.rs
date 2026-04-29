@@ -117,6 +117,29 @@ async fn get_plan_items(app: tauri::AppHandle, case_id: i64) -> Result<Vec<PlanI
     db::get_plan_items(&state, case_id).await
 }
 
+#[tauri::command]
+async fn create_plan_item(
+    app: tauri::AppHandle,
+    case_id: i64,
+    content: String,
+    scheduled_date: Option<String>,
+) -> Result<PlanItem, String> {
+    let state = app.state::<AppState>();
+    db::create_plan_item(&state, case_id, &content, scheduled_date.as_deref()).await
+}
+
+#[tauri::command]
+async fn toggle_plan_item(app: tauri::AppHandle, item_id: i64) -> Result<PlanItem, String> {
+    let state = app.state::<AppState>();
+    db::toggle_plan_item(&state, item_id).await
+}
+
+#[tauri::command]
+async fn delete_plan_item(app: tauri::AppHandle, item_id: i64) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    db::delete_plan_item(&state, item_id).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -169,6 +192,9 @@ pub fn run() {
             save_note,
             search_archive,
             get_plan_items,
+            create_plan_item,
+            toggle_plan_item,
+            delete_plan_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

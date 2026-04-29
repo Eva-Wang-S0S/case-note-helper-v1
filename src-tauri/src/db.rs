@@ -305,7 +305,76 @@ pub async fn get_plan_items(state: &AppState, case_id: i64) -> Result<Vec<PlanIt
         .filter_map(|r| r.ok())
         .collect();
 
-    Ok(items)
+Ok(items)
+}
+
+pub async fn create_plan_item(
+    state: &AppState,
+    case_id: i64,
+    content: &str,
+    scheduled_date: Option<&str>,
+) -> Result<PlanItem, String> {
+    let now = chrono_now();
+    let id = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute(
+            "INSERT INTO plan_items (case_id, content, scheduled_date, completed, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)",
+            params![case_id, content, scheduled_date, &now, &now],
+        ).map_err(|e| format!("Failed to create plan item: {}", e))?;
+        db.last_insert_rowid()
+    };
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at FROM plan_items WHERE id = ?")
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_row([id], |row| {
+        Ok(PlanItem {
+            id: row.get(0)?,
+            case_id: row.get(1)?,
+            content: row.get(2)?,
+            scheduled_date: row.get(3)?,
+            completed: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    }).map_err(|e| e.to_string())
+}
+
+pub async fn toggle_plan_item(state: &AppState, item_id: i64) -> Result<PlanItem, String> {
+    let now = chrono_now();
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute(
+            "UPDATE plan_items SET completed = NOT completed, updated_at = ? WHERE id = ?",
+            params![&now, item_id],
+        ).map_err(|e| format!("Failed to toggle plan item: {}", e))?;
+    }
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at FROM plan_items WHERE id = ?")
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_row([item_id], |row| {
+        Ok(PlanItem {
+            id: row.get(0)?,
+            case_id: row.get(1)?,
+            content: row.get(2)?,
+            scheduled_date: row.get(3)?,
+            completed: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    }).map_err(|e| e.to_string())
+}
+
+pub async fn delete_plan_item(state: &AppState, item_id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM plan_items WHERE id = ?", [item_id])
+        .map_err(|e| format!("Failed to delete plan item: {}", e))?;
+    Ok(())
 }
 
 pub async fn load_settings_from_db(state: &AppState) -> Result<(), String> {
