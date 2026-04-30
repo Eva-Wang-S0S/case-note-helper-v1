@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAppStore } from '../stores/appStore';
 
@@ -6,8 +6,9 @@ export function CasePlan() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const caseId = parseInt(id || '0', 10);
+  const [newItemText, setNewItemText] = useState('');
 
-  const { cases, selectedCaseId, selectCase, planItems, loadPlanItems } = useAppStore();
+  const { cases, selectedCaseId, selectCase, planItems, loadPlanItems, togglePlanItem, deletePlanItem, createPlanItem } = useAppStore();
 
   useEffect(() => {
     if (caseId && caseId !== selectedCaseId) {
@@ -22,6 +23,12 @@ export function CasePlan() {
   }, [caseId, loadPlanItems]);
 
   const currentCase = cases.find((c) => c.id === caseId);
+
+  const handleAddItem = async () => {
+    if (!newItemText.trim() || !caseId) return;
+    await createPlanItem(caseId, newItemText.trim());
+    setNewItemText('');
+  };
 
   if (!caseId) {
     return (
@@ -57,11 +64,27 @@ export function CasePlan() {
         <div className="empty-state">
           <h3 className="empty-state-title" style={{ fontSize: '18px' }}>No plan items yet</h3>
           <p className="empty-state-description">
-            Plan items will appear here after your first case note is drafted.
-            Smart scheduling assistant coming in v1.1.
+            Add your first action item below.
           </p>
         </div>
-      ) : (
+      ) : null}
+
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+        <input
+          type="text"
+          className="input"
+          value={newItemText}
+          onChange={(e) => setNewItemText(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleAddItem()}
+          placeholder="Add a plan item..."
+          style={{ flex: 1 }}
+        />
+        <button className="btn btn-primary" onClick={handleAddItem} disabled={!newItemText.trim()}>
+          Add
+        </button>
+      </div>
+
+      {planItems.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {planItems.map((item) => (
             <div
@@ -77,7 +100,7 @@ export function CasePlan() {
                 <input
                   type="checkbox"
                   checked={item.completed}
-                  onChange={() => {}}
+                  onChange={() => togglePlanItem(item.id)}
                   style={{ marginTop: '2px' }}
                 />
                 <div style={{ flex: 1 }}>
@@ -93,6 +116,14 @@ export function CasePlan() {
                     </p>
                   )}
                 </div>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => deletePlanItem(item.id)}
+                  style={{ padding: '4px 8px', fontSize: '12px' }}
+                  title="Delete"
+                >
+                  ×
+                </button>
               </div>
             </div>
           ))}

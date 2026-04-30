@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act } from '@testing-library/react';
 import { useAppStore } from './appStore';
 
@@ -58,6 +58,9 @@ describe('appStore', () => {
       completed: false,
       created_at: '1234567890',
       updated_at: '1234567890',
+      todoist_task_id: null,
+      sync_status: 'synced',
+      last_synced_at: null,
     };
 
     it('adds plan item to state on success', async () => {
@@ -99,6 +102,9 @@ describe('appStore', () => {
       completed: true,
       created_at: '1234567890',
       updated_at: '1234567891',
+      todoist_task_id: null,
+      sync_status: 'synced',
+      last_synced_at: null,
     };
 
     it('updates plan item in state on success', async () => {
@@ -135,8 +141,8 @@ describe('appStore', () => {
       vi.mocked(invoke).mockResolvedValueOnce(undefined);
       useAppStore.setState({
         planItems: [
-          { id: 7, case_id: 5, content: 'Item A', scheduled_date: null, completed: false, created_at: '1', updated_at: '1' },
-          { id: 8, case_id: 5, content: 'Item B', scheduled_date: null, completed: false, created_at: '1', updated_at: '1' },
+          { id: 7, case_id: 5, content: 'Item A', scheduled_date: null, completed: false, created_at: '1', updated_at: '1', todoist_task_id: null, sync_status: 'synced', last_synced_at: null },
+          { id: 8, case_id: 5, content: 'Item B', scheduled_date: null, completed: false, created_at: '1', updated_at: '1', todoist_task_id: null, sync_status: 'synced', last_synced_at: null },
         ],
       });
       const { deletePlanItem } = useAppStore.getState();
@@ -167,8 +173,8 @@ describe('appStore', () => {
 
   describe('loadPlanItems', () => {
     const mockItems = [
-      { id: 1, case_id: 5, content: 'Item 1', scheduled_date: null, completed: false, created_at: '1', updated_at: '1' },
-      { id: 2, case_id: 5, content: 'Item 2', scheduled_date: '2026-05-01', completed: true, created_at: '1', updated_at: '1' },
+      { id: 1, case_id: 5, content: 'Item 1', scheduled_date: null, completed: false, created_at: '1', updated_at: '1', todoist_task_id: null, sync_status: 'synced', last_synced_at: null },
+      { id: 2, case_id: 5, content: 'Item 2', scheduled_date: '2026-05-01', completed: true, created_at: '1', updated_at: '1', todoist_task_id: null, sync_status: 'synced', last_synced_at: null },
     ];
 
     it('loads plan items into state', async () => {

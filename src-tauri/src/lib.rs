@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Manager, AppHandle};
+use chrono::Utc;
+use std::time::Duration;
 
 mod llm;
 mod db;
+mod todoist;
 
 pub use llm::*;
-pub use db::{AppState, Case, Note, PlanItem};
+pub use db::{AppState, Case, Note, PlanItem, PollState};
+pub use todoist::{TodoistClient, TodoistError, TodoistTask, CreateTaskRequest, UpdateTaskRequest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -140,6 +144,231 @@ async fn delete_plan_item(app: tauri::AppHandle, item_id: i64) -> Result<(), Str
     db::delete_plan_item(&state, item_id).await
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoistConnectionStatus {
+    pub connected: bool,
+    pub last_synced_at: Option<String>,
+    pub rate_limited: bool,
+    pub rate_limit_until: Option<String>,
+}
+
+#[tauri::command]
+async fn get_todoist_tasks(app: tauri::AppHandle) -> Result<Vec<TodoistTask>, String> {
+    let state = app.state::<AppState>();
+    let settings = state.settings.read().await;
+
+    let token = settings.llm_api_key.clone();
+    drop(settings);
+
+    if token.is_empty() {
+        return Err("Todoist API token not configured".to_string());
+    }
+
+    let client = TodoistClient::new(token);
+    client.get_tasks().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_plan_item_toggle(
+    app: tauri::AppHandle,
+    item_id: i64,
+) -> Result<PlanItem, String> {
+    let state = app.state::<AppState>();
+    let settings = state.settings.read().await;
+
+    let token = settings.llm_api_key.clone();
+    drop(settings);
+
+    // Get current item to find its todoist_task_id
+    let item = db::toggle_plan_item(&state, item_id).await?;
+
+    if let Some(todoist_id) = &item.todoist_task_id {
+        let client = TodoistClient::new(token);
+        let update = UpdateTaskRequest {
+            content: None,
+            description: None,
+            due_date: None,
+            priority: None,
+            completed: Some(item.completed),
+        };
+
+        match client.update_task(todoist_id, update).await {
+            Ok(_) => {
+                let now = Utc::now();
+                db::set_plan_item_sync_status(&state, item_id, "synced", Some(&now.to_rfc3339())).await?;
+                {
+                    let mut poll = state.poll_state.write().await;
+                    poll.last_write_at = Some(now);
+                }
+            }
+            Err(TodoistError::Unauthorized) => {
+                db::set_plan_item_sync_status(&state, item_id, "pending_sync", None).await?;
+                return Err("Todoist disconnected".to_string());
+            }
+            Err(TodoistError::RateLimited(s)) => {
+                db::set_plan_item_sync_status(&state, item_id, "pending_sync", None).await?;
+                let mut poll = state.poll_state.write().await;
+                poll.rate_limit_until = Some(Utc::now() + chrono::Duration::seconds(s as i64));
+                return Err(format!("Rate limited, retry in {}s", s));
+            }
+            Err(e) => {
+                db::set_plan_item_sync_status(&state, item_id, "sync_error", None).await?;
+                return Err(format!("Sync failed: {}", e));
+            }
+        }
+    }
+
+    db::get_plan_items(&state, item.case_id).await?
+        .into_iter()
+        .find(|i| i.id == item_id)
+        .ok_or_else(|| "Item not found".to_string())
+}
+
+#[tauri::command]
+async fn get_todoist_connection_status(app: tauri::AppHandle) -> Result<TodoistConnectionStatus, String> {
+    let state = app.state::<AppState>();
+    let settings = state.settings.read().await;
+    let token = settings.llm_api_key.clone();
+    drop(settings);
+
+    let poll = state.poll_state.read().await;
+    let connected = !token.is_empty();
+    let rate_limited = poll.rate_limit_until
+        .map(|rt| rt > Utc::now())
+        .unwrap_or(false);
+    let rate_limit_until = poll.rate_limit_until
+        .filter(|rt| *rt > Utc::now())
+        .map(|rt| rt.to_rfc3339());
+
+    Ok(TodoistConnectionStatus {
+        connected,
+        last_synced_at: None,
+        rate_limited,
+        rate_limit_until,
+    })
+}
+
+#[tauri::command]
+async fn set_todoist_connected(app: tauri::AppHandle, connected: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut poll = state.poll_state.write().await;
+    if !connected {
+        poll.rate_limit_until = None;
+    }
+    Ok(())
+}
+
+fn spawn_poll_worker(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let poll_interval = Duration::from_secs(60);
+
+        loop {
+            tokio::time::sleep(poll_interval).await;
+
+            let state = match app.try_state::<AppState>() {
+                Some(s) => s,
+                None => continue,
+            };
+
+            // Check rate limit
+            {
+                let poll = state.poll_state.read().await;
+                if let Some(until) = poll.rate_limit_until {
+                    if until > Utc::now() {
+                        log::debug!("Poll skipped: rate limited until {}", until);
+                        continue;
+                    }
+                }
+            }
+
+            let settings = state.settings.read().await;
+            let token = settings.llm_api_key.clone();
+            drop(settings);
+
+            if token.is_empty() {
+                continue;
+            }
+
+            // Get items with todoist_task_id
+            let items = match db::get_plan_items_with_todoist_ids(&state).await {
+                Ok(items) => items,
+                Err(e) => {
+                    log::error!("Poll: failed to get items: {}", e);
+                    continue;
+                }
+            };
+
+            if items.is_empty() {
+                continue;
+            }
+
+            let now = Utc::now();
+            let ids: Vec<String> = items
+                .iter()
+                .filter(|item| {
+                    if let Some(last_write) = item.updated_at.parse::<i64>().ok() {
+                        let last_write_dt = chrono::DateTime::from_timestamp(last_write, 0)
+                            .unwrap_or_default();
+                        let age = now.signed_duration_since(last_write_dt);
+                        age.num_seconds() >= 120
+                    } else {
+                        true
+                    }
+                })
+                .filter_map(|item| item.todoist_task_id.clone())
+                .collect();
+
+            if ids.is_empty() {
+                continue;
+            }
+
+            let client = TodoistClient::new(token);
+            let remote_tasks = match client.get_tasks_by_ids(&ids).await {
+                Ok(tasks) => tasks,
+                Err(TodoistError::RateLimited(s)) => {
+                    log::warn!("Poll: rate limited for {}s", s);
+                    let mut poll = state.poll_state.write().await;
+                    poll.rate_limit_until = Some(Utc::now() + chrono::Duration::seconds(s as i64));
+                    continue;
+                }
+                Err(TodoistError::Unauthorized) => {
+                    log::warn!("Poll: Todoist unauthorized");
+                    continue;
+                }
+                Err(e) => {
+                    log::error!("Poll: failed to fetch tasks: {}", e);
+                    continue;
+                }
+            };
+
+            for item in &items {
+                let remote = remote_tasks.iter().find(|t| Some(&t.id) == item.todoist_task_id.as_ref());
+                match remote {
+                    Some(task) => {
+                        if task.completed != item.completed {
+                            log::info!("Poll: updating local item {} to completed={}", item.id, task.completed);
+                            // Update local completed state
+                            let db = state.db.lock().map_err(|e| e.to_string());
+                            if let Ok(db) = db {
+                                let now_str = Utc::now().timestamp().to_string();
+                                db.execute(
+                                    "UPDATE plan_items SET completed = ?, updated_at = ? WHERE id = ?",
+                                    rusqlite::params![task.completed, now_str, item.id],
+                                ).ok();
+                            }
+                        }
+                    }
+                    None => {
+                        // Task not returned means it was deleted in Todoist
+                        log::info!("Poll: task {} not found in Todoist, clearing reference", item.id);
+                        db::clear_todoist_task_id(&state, item.id).await.ok();
+                    }
+                }
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -179,6 +408,8 @@ pub fn run() {
                 }
             });
 
+            spawn_poll_worker(app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -195,6 +426,10 @@ pub fn run() {
             create_plan_item,
             toggle_plan_item,
             delete_plan_item,
+            get_todoist_tasks,
+            sync_plan_item_toggle,
+            get_todoist_connection_status,
+            set_todoist_connected,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

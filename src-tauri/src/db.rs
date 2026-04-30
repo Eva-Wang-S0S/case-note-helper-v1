@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -34,12 +35,22 @@ pub struct PlanItem {
     pub completed: bool,
     pub created_at: String,
     pub updated_at: String,
+    pub todoist_task_id: Option<String>,
+    pub sync_status: String,
+    pub last_synced_at: Option<String>,
 }
 
 pub struct AppState {
     pub app_handle: AppHandle,
     pub db: Arc<Mutex<Connection>>,
     pub settings: Arc<RwLock<super::AppSettings>>,
+    pub poll_state: Arc<RwLock<PollState>>,
+}
+
+#[derive(Debug, Default)]
+pub struct PollState {
+    pub rate_limit_until: Option<DateTime<Utc>>,
+    pub last_write_at: Option<DateTime<Utc>>,
 }
 
 impl AppState {
@@ -52,6 +63,7 @@ impl AppState {
             app_handle,
             db: Arc::new(Mutex::new(db)),
             settings: Arc::new(RwLock::new(super::AppSettings::default())),
+            poll_state: Arc::new(RwLock::new(PollState::default())),
         })
     }
 }
@@ -102,6 +114,20 @@ pub async fn init_database(state: &AppState) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_plan_items_case_id ON plan_items(case_id);
         ",
     ).map_err(|e| format!("Failed to create schema: {}", e))?;
+
+    // Migration: add Todoist sync columns to plan_items (additive, nullable)
+    let migration_result = db.execute_batch(
+        "
+        ALTER TABLE plan_items ADD COLUMN todoist_task_id TEXT;
+        ALTER TABLE plan_items ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'synced';
+        ALTER TABLE plan_items ADD COLUMN last_synced_at TEXT;
+        ",
+    );
+    // Ignore error if columns already exist (SQLiteite permits ADD COLUMN
+    // on existing tables; if they already exist the statement is a no-op)
+    if let Err(e) = migration_result {
+        log::info!("Plan items migration (columns may already exist): {}", e);
+    }
 
     drop(db);
     log::info!("Database schema initialized");
@@ -286,7 +312,7 @@ pub async fn search_archive(state: &AppState, query: &str) -> Result<Vec<Case>, 
 pub async fn get_plan_items(state: &AppState, case_id: i64) -> Result<Vec<PlanItem>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
-        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at FROM plan_items WHERE case_id = ? ORDER BY scheduled_date ASC NULLS LAST, created_at ASC")
+        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at, todoist_task_id, sync_status, last_synced_at FROM plan_items WHERE case_id = ? ORDER BY scheduled_date ASC NULLS LAST, created_at ASC")
         .map_err(|e| e.to_string())?;
 
     let items = stmt
@@ -299,6 +325,9 @@ pub async fn get_plan_items(state: &AppState, case_id: i64) -> Result<Vec<PlanIt
                 completed: row.get(4)?,
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
+                todoist_task_id: row.get(7)?,
+                sync_status: row.get(8)?,
+                last_synced_at: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -329,7 +358,7 @@ pub async fn create_plan_item(
 
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
-        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at FROM plan_items WHERE id = ?")
+        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at, todoist_task_id, sync_status, last_synced_at FROM plan_items WHERE id = ?")
         .map_err(|e| e.to_string())?;
 
     stmt.query_row([id], |row| {
@@ -341,6 +370,9 @@ pub async fn create_plan_item(
             completed: row.get(4)?,
             created_at: row.get(5)?,
             updated_at: row.get(6)?,
+            todoist_task_id: row.get(7)?,
+            sync_status: row.get(8)?,
+            last_synced_at: row.get(9)?,
         })
     }).map_err(|e| e.to_string())
 }
@@ -357,7 +389,7 @@ pub async fn toggle_plan_item(state: &AppState, item_id: i64) -> Result<PlanItem
 
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
-        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at FROM plan_items WHERE id = ?")
+        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at, todoist_task_id, sync_status, last_synced_at FROM plan_items WHERE id = ?")
         .map_err(|e| e.to_string())?;
 
     stmt.query_row([item_id], |row| {
@@ -369,8 +401,66 @@ pub async fn toggle_plan_item(state: &AppState, item_id: i64) -> Result<PlanItem
             completed: row.get(4)?,
             created_at: row.get(5)?,
             updated_at: row.get(6)?,
+            todoist_task_id: row.get(7)?,
+            sync_status: row.get(8)?,
+            last_synced_at: row.get(9)?,
         })
     }).map_err(|e| e.to_string())
+}
+
+pub async fn set_plan_item_sync_status(
+    state: &AppState,
+    item_id: i64,
+    sync_status: &str,
+    last_synced_at: Option<&str>,
+) -> Result<(), String> {
+    let now = chrono_now();
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute(
+        "UPDATE plan_items SET sync_status = ?, last_synced_at = ?, updated_at = ? WHERE id = ?",
+        params![sync_status, last_synced_at, &now, item_id],
+    ).map_err(|e| format!("Failed to update sync status: {}", e))?;
+    Ok(())
+}
+
+pub async fn get_plan_items_with_todoist_ids(
+    state: &AppState,
+) -> Result<Vec<PlanItem>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at, todoist_task_id, sync_status, last_synced_at FROM plan_items WHERE todoist_task_id IS NOT NULL ORDER BY updated_at ASC")
+        .map_err(|e| e.to_string())?;
+
+    let items = stmt
+        .query_map([], |row| {
+            Ok(PlanItem {
+                id: row.get(0)?,
+                case_id: row.get(1)?,
+                content: row.get(2)?,
+                scheduled_date: row.get(3)?,
+                completed: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                todoist_task_id: row.get(7)?,
+                sync_status: row.get(8)?,
+                last_synced_at: row.get(9)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(items)
+}
+
+pub async fn clear_todoist_task_id(state: &AppState, item_id: i64) -> Result<(), String> {
+    let now = chrono_now();
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute(
+        "UPDATE plan_items SET todoist_task_id = NULL, sync_status = 'synced', last_synced_at = ?, updated_at = ? WHERE id = ?",
+        params![&now, &now, item_id],
+    ).map_err(|e| format!("Failed to clear todoist task id: {}", e))?;
+    Ok(())
 }
 
 pub async fn delete_plan_item(state: &AppState, item_id: i64) -> Result<(), String> {
@@ -436,6 +526,48 @@ mod tests {
         fn new(db_path: &str) -> Self {
             let db = Connection::open(db_path).unwrap();
             db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").unwrap();
+            // Apply same migrations as init_database for test compatibility
+            db.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS cases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    client_name TEXT NOT NULL,
+                    stage TEXT NOT NULL DEFAULT 'intake',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    case_id INTEGER NOT NULL,
+                    raw_content TEXT NOT NULL DEFAULT '',
+                    draft_content TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS plan_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    case_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    scheduled_date TEXT,
+                    completed INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_notes_case_id ON notes(case_id);
+                CREATE INDEX IF NOT EXISTS idx_plan_items_case_id ON plan_items(case_id);
+                ALTER TABLE plan_items ADD COLUMN todoist_task_id TEXT;
+                ALTER TABLE plan_items ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'synced';
+                ALTER TABLE plan_items ADD COLUMN last_synced_at TEXT;
+                ",
+            ).unwrap();
             Self {
                 db: Arc::new(Mutex::new(db)),
                 settings: Arc::new(RwLock::new(super::super::AppSettings::default())),
@@ -454,9 +586,9 @@ mod tests {
             db.last_insert_rowid()
         };
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        let mut stmt = db.prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at FROM plan_items WHERE id = ?").map_err(|e| e.to_string())?;
+        let mut stmt = db.prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at, todoist_task_id, sync_status, last_synced_at FROM plan_items WHERE id = ?").map_err(|e| e.to_string())?;
         stmt.query_row([id], |row| {
-            Ok(PlanItem { id: row.get(0)?, case_id: row.get(1)?, content: row.get(2)?, scheduled_date: row.get(3)?, completed: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)? })
+            Ok(PlanItem { id: row.get(0)?, case_id: row.get(1)?, content: row.get(2)?, scheduled_date: row.get(3)?, completed: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?, todoist_task_id: row.get(7)?, sync_status: row.get(8)?, last_synced_at: row.get(9)? })
         }).map_err(|e| e.to_string())
     }
 
@@ -467,9 +599,9 @@ mod tests {
             db.execute("UPDATE plan_items SET completed = NOT completed, updated_at = ? WHERE id = ?", params![&now, item_id]).map_err(|e| format!("Failed to toggle plan item: {}", e))?;
         }
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        let mut stmt = db.prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at FROM plan_items WHERE id = ?").map_err(|e| e.to_string())?;
+        let mut stmt = db.prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at, todoist_task_id, sync_status, last_synced_at FROM plan_items WHERE id = ?").map_err(|e| e.to_string())?;
         stmt.query_row([item_id], |row| {
-            Ok(PlanItem { id: row.get(0)?, case_id: row.get(1)?, content: row.get(2)?, scheduled_date: row.get(3)?, completed: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)? })
+            Ok(PlanItem { id: row.get(0)?, case_id: row.get(1)?, content: row.get(2)?, scheduled_date: row.get(3)?, completed: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?, todoist_task_id: row.get(7)?, sync_status: row.get(8)?, last_synced_at: row.get(9)? })
         }).map_err(|e| e.to_string())
     }
 
@@ -518,9 +650,9 @@ mod tests {
     async fn test_get_plan_items(state: &TestState, case_id: i64) -> Result<Vec<PlanItem>, String> {
         use super::*;
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        let mut stmt = db.prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at FROM plan_items WHERE case_id = ? ORDER BY scheduled_date ASC NULLS LAST, created_at ASC").map_err(|e| e.to_string())?;
+        let mut stmt = db.prepare("SELECT id, case_id, content, scheduled_date, completed, created_at, updated_at, todoist_task_id, sync_status, last_synced_at FROM plan_items WHERE case_id = ? ORDER BY scheduled_date ASC NULLS LAST, created_at ASC").map_err(|e| e.to_string())?;
         let items = stmt.query_map([case_id], |row| {
-            Ok(PlanItem { id: row.get(0)?, case_id: row.get(1)?, content: row.get(2)?, scheduled_date: row.get(3)?, completed: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)? })
+            Ok(PlanItem { id: row.get(0)?, case_id: row.get(1)?, content: row.get(2)?, scheduled_date: row.get(3)?, completed: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?, todoist_task_id: row.get(7)?, sync_status: row.get(8)?, last_synced_at: row.get(9)? })
         }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
         Ok(items)
     }

@@ -28,6 +28,9 @@ export interface PlanItem {
   completed: boolean;
   created_at: string;
   updated_at: string;
+  todoist_task_id: string | null;
+  sync_status: string;
+  last_synced_at: string | null;
 }
 
 export interface AppSettings {
@@ -41,8 +44,19 @@ export interface AppSettings {
 export interface TodoistTask {
   id: string;
   content: string;
-  case_tag: string;
+  description: string;
   completed: boolean;
+  due_date: string | null;
+  due_datetime: string | null;
+  priority: number;
+  project_id: string;
+}
+
+export interface TodoistConnectionStatus {
+  connected: boolean;
+  last_synced_at: string | null;
+  rate_limited: boolean;
+  rate_limit_until: string | null;
 }
 
 interface AppState {
@@ -53,6 +67,7 @@ interface AppState {
   settings: AppSettings;
   todoistPanelOpen: boolean;
   todoistTasks: TodoistTask[];
+  todoistConnectionStatus: TodoistConnectionStatus;
   isLoading: boolean;
   error: string | null;
 
@@ -66,9 +81,12 @@ interface AppState {
   createPlanItem: (caseId: number, content: string, scheduledDate?: string) => Promise<PlanItem>;
   togglePlanItem: (itemId: number) => Promise<void>;
   deletePlanItem: (itemId: number) => Promise<void>;
+  syncPlanItem: (itemId: number) => Promise<void>;
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   searchArchive: (query: string) => Promise<Case[]>;
+  loadTodoistTasks: () => Promise<void>;
+  getTodoistConnectionStatus: () => Promise<void>;
   toggleTodoistPanel: () => void;
   setError: (error: string | null) => void;
 }
@@ -87,6 +105,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   todoistPanelOpen: true,
   todoistTasks: [],
+  todoistConnectionStatus: { connected: false, last_synced_at: null, rate_limited: false, rate_limit_until: null },
   isLoading: false,
   error: null,
 
@@ -205,6 +224,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  syncPlanItem: async (itemId) => {
+    try {
+      const updated = await invoke<PlanItem>('sync_plan_item_toggle', { itemId });
+      set((state) => ({
+        planItems: state.planItems.map((i) => (i.id === itemId ? updated : i)),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
   loadSettings: async () => {
     try {
       const settings = await invoke<AppSettings>('get_settings');
@@ -234,6 +265,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (e) {
       set({ error: String(e), isLoading: false });
       throw e;
+    }
+  },
+
+  loadTodoistTasks: async () => {
+    try {
+      const tasks = await invoke<TodoistTask[]>('get_todoist_tasks');
+      set({ todoistTasks: tasks });
+    } catch (e) {
+      console.error('Failed to load Todoist tasks:', e);
+    }
+  },
+
+  getTodoistConnectionStatus: async () => {
+    try {
+      const status = await invoke<TodoistConnectionStatus>('get_todoist_connection_status');
+      set({ todoistConnectionStatus: status });
+    } catch (e) {
+      console.error('Failed to get Todoist connection status:', e);
     }
   },
 
