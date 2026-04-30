@@ -6,7 +6,7 @@ export function Settings() {
   const navigate = useNavigate();
   const { settings, saveSettings, isLoading, error, setError } = useAppStore();
 
-  const [form, setForm] = useState<AppSettings>(settings);
+  const [form, setForm] = useState<AppSettings>({ ...settings, llm_note_prompt: settings.llm_note_prompt || 'You are a social worker assistant helping to draft case notes. Given the raw observations below, write a professional, structured case note. Use clear headings and bullet points where appropriate. Focus on facts, observations, and actions taken.' });
   const [showSuccess, setShowSuccess] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
 
@@ -175,8 +175,19 @@ export function Settings() {
           </div>
 
           <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '16px' }}>
-            Terms to redact before sending to LLM. Applied when "Anonymize" is enabled.
+            Terms to redact before sending to LLM. Applied when "Anonymize" is enabled. Matching is case-insensitive and applies across the entire text. For example, adding <code style={{ fontSize: '12px', background: 'var(--color-bg)', padding: '2px 4px', borderRadius: '4px' }}>"Smith"</code> will replace all instances of "smith", "Smith", "SMITH" with <code style={{ fontSize: '12px', background: 'var(--color-bg)', padding: '2px 4px', borderRadius: '4px' }}>[REDACTED]</code>.
           </p>
+          <div style={{ background: 'var(--color-sidebar)', borderRadius: '6px', padding: '12px', marginBottom: '16px' }}>
+            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+              <strong>Common examples to add:</strong>
+            </p>
+            <ul style={{ fontSize: '13px', color: 'var(--color-text-secondary)', margin: 0, paddingLeft: '20px' }}>
+              <li>Client/guardian names (e.g., <code style={{ fontSize: '12px', background: 'var(--color-surface)', padding: '2px 4px', borderRadius: '4px' }}>John Smith</code>)</li>
+              <li>Organizations (e.g., <code style={{ fontSize: '12px', background: 'var(--color-surface)', padding: '2px 4px', borderRadius: '4px' }}>Acme Corp</code>)</li>
+              <li>School names, addresses, specific locations</li>
+              <li>Case file numbers or reference IDs</li>
+            </ul>
+          </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {form.redaction_list.map((term, index) => (
@@ -209,6 +220,22 @@ export function Settings() {
           )}
         </section>
 
+        <section style={{ marginBottom: '32px' }}>
+          <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>LLM Note Prompt</h3>
+          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '16px' }}>
+            Customize the prompt sent to the LLM when drafting case notes.
+          </p>
+          <div className="form-group">
+            <textarea
+              className="textarea"
+              value={form.llm_note_prompt}
+              onChange={(e) => setForm({ ...form, llm_note_prompt: e.target.value })}
+              rows={5}
+              style={{ fontSize: '13px' }}
+            />
+          </div>
+        </section>
+
         <div style={{ display: 'flex', gap: '12px' }}>
           <button
             className="btn btn-primary"
@@ -219,7 +246,7 @@ export function Settings() {
           </button>
           <button
             className="btn btn-secondary"
-            onClick={() => setForm(settings)}
+            onClick={() => setForm({ ...settings, llm_note_prompt: settings.llm_note_prompt || '' })}
           >
             Cancel
           </button>

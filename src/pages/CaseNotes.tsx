@@ -14,6 +14,7 @@ export function CaseNotes() {
     draftNote,
     error,
     setError,
+    notes,
   } = useAppStore();
 
   const [rawInput, setRawInput] = useState('');
@@ -26,12 +27,32 @@ export function CaseNotes() {
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveIndicatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initializedRef = useRef(false);
 
+  // Load existing notes when case is selected
   useEffect(() => {
+    // Reset initialization flag and clear content when switching cases
+    initializedRef.current = false;
+    setRawInput('');
+    setDraftOutput('');
     if (caseId && caseId !== selectedCaseId) {
       selectCase(caseId);
     }
   }, [caseId, selectedCaseId, selectCase]);
+
+  // Populate rawInput and draftOutput from loaded notes
+  useEffect(() => {
+    if (notes.length > 0 && !initializedRef.current) {
+      // Sort by updated_at descending to get the most recent note
+      const sortedNotes = [...notes].sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
+      const latestNote = sortedNotes[0];
+      setRawInput(latestNote.raw_content || '');
+      setDraftOutput(latestNote.draft_content || '');
+      initializedRef.current = true;
+    }
+  }, [notes]);
 
   const triggerSave = useCallback(async () => {
     if (!caseId || !rawInput.trim()) return;
@@ -46,6 +67,22 @@ export function CaseNotes() {
       setError(String(e));
     }
   }, [caseId, rawInput, draftOutput, saveNote, setError]);
+
+  // Save handler for manual save button
+  const handleSaveDraft = async () => {
+    if (!caseId || !rawInput.trim()) return;
+    setValidationError(null);
+    try {
+      await saveNote(caseId, rawInput, draftOutput || undefined);
+      setShowSaved(true);
+      if (saveIndicatorTimer.current) {
+        clearTimeout(saveIndicatorTimer.current);
+      }
+      saveIndicatorTimer.current = setTimeout(() => setShowSaved(false), 2000);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   useEffect(() => {
     if (autoSaveTimer.current) {
@@ -76,8 +113,16 @@ export function CaseNotes() {
     try {
       const draft = await draftNote(trimmed, anonymize);
       setDraftOutput(draft);
+      // Save raw input alongside draft result
+      await saveNote(caseId, rawInput, draft);
     } catch (e) {
       setDraftError('Draft failed. Check your connection or try again.');
+      // Save raw input even on error so it's not lost
+      try {
+        await saveNote(caseId, rawInput, draftOutput || undefined);
+      } catch {
+        // ignore save error here, main error is the draft failure
+      }
     } finally {
       setIsDrafting(false);
     }
@@ -104,20 +149,34 @@ export function CaseNotes() {
 
   return (
     <div className="page-container" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div className="tab-bar" style={{ marginBottom: '24px' }}>
-        <div
-          className="tab active"
-          onClick={() => {}}
-        >
-          Notes
+      <div className="tab-bar" style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <div
+            className="tab active"
+            onClick={() => {}}
+          >
+            Notes
+          </div>
+          <div
+            className="tab"
+            onClick={() => navigate(`/case/${caseId}/plan`)}
+            style={{ cursor: 'pointer' }}
+          >
+            Plan
+          </div>
         </div>
-        <div
-          className="tab"
-          onClick={() => navigate(`/case/${caseId}/plan`)}
-          style={{ cursor: 'pointer' }}
+        <button
+          className="btn btn-ghost"
+          onClick={() => navigate('/settings/casenotes')}
+          style={{ padding: '6px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}
+          title="Case note settings"
         >
-          Plan
-        </div>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke="currentColor" strokeWidth="1.2"/>
+            <path d="M6.5 1.5h3M8 1.5v1.5M11.5 4l-.8.6M12.5 7h1.5M11.5 10l-.8-.6M8 13.5V12M4.5 4l.8.6M3.5 7H2M4.5 10l.8-.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+          </svg>
+          Settings
+        </button>
       </div>
 
       {error && (
@@ -189,9 +248,14 @@ export function CaseNotes() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Draft</h3>
             {draftOutput && (
-              <button className="btn btn-secondary" onClick={handleCopyDraft}>
-                Copy
-              </button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="btn btn-secondary" onClick={handleSaveDraft}>
+                  Save
+                </button>
+                <button className="btn btn-secondary" onClick={handleCopyDraft}>
+                  Copy
+                </button>
+              </div>
             )}
           </div>
 

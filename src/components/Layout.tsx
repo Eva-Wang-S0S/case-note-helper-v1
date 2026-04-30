@@ -3,20 +3,78 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../stores/appStore';
 import { TodoistPanel } from './TodoistPanel';
 
+const STAGES = ['Intake', 'Assessment', 'Support Plan', 'Review', 'Closed'];
+
+const STAGE_COLORS: Record<string, string> = {
+  'Intake': 'intake',
+  'Assessment': 'assessment',
+  'Support Plan': 'support-plan',
+  'Review': 'review',
+  'Closed': 'closed',
+};
+
 interface LayoutProps {
   children: React.ReactNode;
 }
 
 export function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showNewCaseModal, setShowNewCaseModal] = useState(false);
+  const [newCaseName, setNewCaseName] = useState('');
+  const [newClientName, setNewClientName] = useState('');
+  const [newStage, setNewStage] = useState('Intake');
+  const [activeContextCase, setActiveContextCase] = useState<number | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [caseToDelete, setCaseToDelete] = useState<{ id: number; name: string } | null>(null);
   const navigate = useNavigate();
-  const { cases, selectedCaseId, todoistPanelOpen, toggleTodoistPanel } = useAppStore();
+  const { cases, selectedCaseId, todoistPanelOpen, toggleTodoistPanel, createCase, updateCaseStage, deleteCase, isLoading } = useAppStore();
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024;
 
   const handleCaseSelect = (caseId: number) => {
     navigate(`/case/${caseId}/notes`);
     setSidebarOpen(false);
+  };
+
+  const handleCreateCase = async () => {
+    if (!newCaseName.trim() || !newClientName.trim()) return;
+    try {
+      const newCase = await createCase(newCaseName.trim(), newClientName.trim(), newStage);
+      setShowNewCaseModal(false);
+      setNewCaseName('');
+      setNewClientName('');
+      setNewStage('Intake');
+      navigate(`/case/${newCase.id}/notes`);
+    } catch (e) {
+      // error handled in store
+    }
+  };
+
+  const handleChangeStage = async (caseId: number, stage: string) => {
+    try {
+      await updateCaseStage(caseId, stage);
+    } catch (e) {
+      // error handled in store
+    }
+    setActiveContextCase(null);
+  };
+
+  const handleDeleteCase = async () => {
+    if (!caseToDelete) return;
+    try {
+      await deleteCase(caseToDelete.id);
+      setShowDeleteConfirm(false);
+      setCaseToDelete(null);
+      navigate('/');
+    } catch (e) {
+      // error handled in store
+    }
+  };
+
+  const confirmDelete = (caseId: number, caseName: string) => {
+    setCaseToDelete({ id: caseId, name: caseName });
+    setShowDeleteConfirm(true);
+    setActiveContextCase(null);
   };
 
   return (
@@ -43,11 +101,62 @@ export function Layout({ children }: LayoutProps) {
               >
                 <div className="case-item-name">{c.name}</div>
                 <div className="case-item-meta">
-                  <span className="stage-tag">{c.stage}</span>
+                  <div
+                    className={`stage-dot stage-dot-${STAGE_COLORS[c.stage] || 'intake'}`}
+                    title={c.stage}
+                  />
                 </div>
+                {selectedCaseId === c.id && (
+                  <div className="case-item-actions" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="case-context-btn"
+                      onClick={() => setActiveContextCase(activeContextCase === c.id ? null : c.id)}
+                      title="Case options"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <circle cx="7" cy="3" r="1.2" fill="currentColor"/>
+                        <circle cx="7" cy="7" r="1.2" fill="currentColor"/>
+                        <circle cx="7" cy="11" r="1.2" fill="currentColor"/>
+                      </svg>
+                    </button>
+                    {activeContextCase === c.id && (
+                      <div className="case-context-menu">
+                        <div className="context-menu-section">
+                          <div className="context-menu-label">Change Stage</div>
+                          {STAGES.map((stage) => (
+                            <button
+                              key={stage}
+                              className={`context-menu-item ${c.stage === stage ? 'active' : ''}`}
+                              onClick={() => handleChangeStage(c.id, stage)}
+                            >
+                              <span className={`stage-dot stage-dot-${STAGE_COLORS[stage]} ${c.stage === stage ? '' : 'muted'}`} />
+                              {stage}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          className="context-menu-item danger"
+                          onClick={() => confirmDelete(c.id, c.name)}
+                        >
+                          Delete Case
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}
+        </div>
+
+        <div className="sidebar-footer">
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowNewCaseModal(true)}
+            style={{ width: '100%', justifyContent: 'center' }}
+          >
+            + Add Case
+          </button>
         </div>
       </aside>
 
@@ -124,6 +233,83 @@ export function Layout({ children }: LayoutProps) {
             <TodoistPanel />
           </div>
         </aside>
+      )}
+
+      {showNewCaseModal && (
+        <div className="modal-overlay" onClick={() => setShowNewCaseModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">New Case</h3>
+            <div className="form-group">
+              <label className="form-label">Case Name</label>
+              <input
+                type="text"
+                className="input"
+                value={newCaseName}
+                onChange={(e) => setNewCaseName(e.target.value)}
+                placeholder="e.g., Case #2024-042"
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Client Name</label>
+              <input
+                type="text"
+                className="input"
+                value={newClientName}
+                onChange={(e) => setNewClientName(e.target.value)}
+                placeholder="e.g., Jane Smith"
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Stage</label>
+              <select
+                className="input"
+                value={newStage}
+                onChange={(e) => setNewStage(e.target.value)}
+              >
+                <option value="Intake">Intake</option>
+                <option value="Assessment">Assessment</option>
+                <option value="Support Plan">Support Plan</option>
+                <option value="Review">Review</option>
+                <option value="Closed">Closed</option>
+              </select>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowNewCaseModal(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleCreateCase}
+                disabled={!newCaseName.trim() || !newClientName.trim() || isLoading}
+              >
+                {isLoading ? <span className="btn-spinner" /> : 'Create Case'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteConfirm && caseToDelete && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Delete Case</h3>
+            <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', marginBottom: '24px' }}>
+              Are you sure you want to permanently delete <strong>{caseToDelete.name}</strong>? This action cannot be undone.
+            </p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowDeleteConfirm(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={handleDeleteCase}
+                disabled={isLoading}
+              >
+                {isLoading ? <span className="btn-spinner" /> : 'Delete Case'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
