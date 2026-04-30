@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../stores/appStore';
+import { TodoistPanel } from './TodoistPanel';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -120,7 +121,7 @@ export function Layout({ children }: LayoutProps) {
             </button>
           </div>
           <div className="panel-content">
-            <div className="panel-empty">No tasks for this case</div>
+            <TodoistPanel />
           </div>
         </aside>
       )}

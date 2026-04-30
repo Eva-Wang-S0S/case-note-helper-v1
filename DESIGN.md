@@ -133,6 +133,13 @@ Not in v1 scope. If added later: reduce saturation 10-20%, don't redesign surfac
 - **Container:** light red bg (`#fef2f2`), red left border (3px `#dc2626`), 6px radius
 - **Content:** error icon (optional) + error message (14px) + retry button (ghost style)
 
+### Plan Item List
+- **Add item:** Text input at top of list + "Add" button (primary, compact). Enter key submits.
+- **Item row:** checkbox + content (14px) + scheduled date (12px, muted) + delete button (ghost, shown on hover, "×" icon)
+- **Toggle:** Clicking checkbox calls `togglePlanItem`, updates item in-place
+- **Delete:** Clicking × calls `deletePlanItem`, removes item from list immediately
+- **Empty:** "No plan items yet. Add your first action item above." (14px, text-secondary, centered)
+
 ### Todoist Panel
 - **Header:** "Todoist" (14px, semibold, text-secondary) + collapse chevron button
 - **Task item:** checkbox + task name (14px) + case tag (12px, muted). Completed: checkbox checked, text strikethrough + muted.
