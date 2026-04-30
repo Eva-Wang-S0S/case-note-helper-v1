@@ -137,7 +137,7 @@ pub async fn init_database(state: &AppState) -> Result<(), String> {
 pub async fn get_all_cases(state: &AppState) -> Result<Vec<Case>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
-        .prepare("SELECT id, name, client_name, stage, status, created_at, updated_at FROM cases ORDER BY updated_at DESC")
+        .prepare("SELECT id, name, client_name, stage, status, created_at, updated_at FROM cases ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
 
     let cases = stmt
@@ -200,6 +200,33 @@ pub async fn create_case(
 
     log::info!("Created case {} with id {}", name, id);
     get_case(state, id).await
+}
+
+pub async fn update_case_stage(
+    state: &AppState,
+    case_id: i64,
+    stage: &str,
+) -> Result<Case, String> {
+    let now = chrono_now();
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute(
+            "UPDATE cases SET stage = ?, updated_at = ? WHERE id = ?",
+            params![stage, &now, case_id],
+        ).map_err(|e| format!("Failed to update case stage: {}", e))?;
+    }
+    log::info!("Updated case {} stage to {}", case_id, stage);
+    get_case(state, case_id).await
+}
+
+pub async fn delete_case(state: &AppState, case_id: i64) -> Result<(), String> {
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute("DELETE FROM cases WHERE id = ?", [case_id])
+            .map_err(|e| format!("Failed to delete case: {}", e))?;
+    }
+    log::info!("Deleted case {}", case_id);
+    Ok(())
 }
 
 pub async fn get_notes(state: &AppState, case_id: i64) -> Result<Vec<Note>, String> {

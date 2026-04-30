@@ -18,6 +18,7 @@ pub struct AppSettings {
     pub llm_api_key: String,
     pub llm_model: String,
     pub redaction_list: Vec<String>,
+    pub llm_note_prompt: String,
 }
 
 impl Default for AppSettings {
@@ -27,11 +28,11 @@ impl Default for AppSettings {
             llm_endpoint: "http://localhost:11434/v1/chat/completions".to_string(),
             llm_api_key: "".to_string(),
             llm_model: "llama3.2".to_string(),
-            redaction_list: vec![
-                "[REDACTED NAME]".to_string(),
-                "[REDACTED ORG]".to_string(),
-                "[REDACTED LOCATION]".to_string(),
-            ],
+            redaction_list: vec![],
+            llm_note_prompt: "You are a social worker assistant helping to draft case notes. \
+Given the raw observations below, write a professional, structured case note. \
+Use clear headings and bullet points where appropriate. \
+Focus on facts, observations, and actions taken.".to_string(),
         }
     }
 }
@@ -68,9 +69,10 @@ async fn draft_case_note(
         raw_input.clone()
     };
 
+    let note_prompt = settings.llm_note_prompt.clone();
     drop(settings);
 
-    let result = llm::draft_note(&state, &input).await?;
+    let result = llm::draft_note(&state, &input, &note_prompt).await?;
     Ok(result)
 }
 
@@ -90,6 +92,18 @@ async fn get_case(app: tauri::AppHandle, case_id: i64) -> Result<Case, String> {
 async fn create_case(app: tauri::AppHandle, name: String, client_name: String, stage: String) -> Result<Case, String> {
     let state = app.state::<AppState>();
     db::create_case(&state, &name, &client_name, &stage).await
+}
+
+#[tauri::command]
+async fn update_case_stage(app: tauri::AppHandle, case_id: i64, stage: String) -> Result<Case, String> {
+    let state = app.state::<AppState>();
+    db::update_case_stage(&state, case_id, &stage).await
+}
+
+#[tauri::command]
+async fn delete_case(app: tauri::AppHandle, case_id: i64) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    db::delete_case(&state, case_id).await
 }
 
 #[tauri::command]
@@ -419,6 +433,8 @@ pub fn run() {
             get_cases,
             get_case,
             create_case,
+            update_case_stage,
+            delete_case,
             get_notes,
             save_note,
             search_archive,
