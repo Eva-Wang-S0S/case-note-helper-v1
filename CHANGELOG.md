@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.0.3] - 2026-04-30
+
+### Added
+- Configurable LLM note prompt: user can customize the system prompt used when drafting case notes
+- Redaction list with usage examples: redaction list now shows explanation and common examples to add
+- CaseNoteSettings page: quick-access settings page at /settings/casenotes for redaction and prompt config
+- Case-specific draft textarea: raw observations and draft persist per case, not shared across cases
+- Raw observations persist on LLM error: if draft generation fails, raw input is saved to prevent data loss
+- + Add Case button in sidebar: create new cases from any page via the sidebar footer
+- Context menu on selected case: stage change and delete options via dropdown on active case
+- Stage color dots: 5 stages now display colored dots (blue/amber/purple/cyan/gray) instead of text tags
+- Delete case with confirmation: permanent deletion requires confirmation dialog
+
+### Changed
+- Case sort order: cases now sorted by creation date (newest first) instead of last-updated
+- Redaction list defaults to empty: removed non-functional placeholder entries
+- Draft textarea has Save button: users can manually save draft content
+
+### Fixed
+- New case starts empty: newly created cases show blank notes fields, not leftover from previous case
+
 ## [0.1.0.2] - 2026-04-30
 
 ### Added
