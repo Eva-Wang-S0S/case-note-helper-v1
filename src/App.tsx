@@ -6,6 +6,7 @@ import { Dashboard } from './pages/Dashboard';
 import { CaseNotes } from './pages/CaseNotes';
 import { CasePlan } from './pages/CasePlan';
 import { Settings } from './pages/Settings';
+import { CaseNoteSettings } from './pages/CaseNoteSettings';
 import { Archive } from './pages/Archive';
 import './index.css';
 
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/case/:id/notes" element={<CaseNotes />} />
           <Route path="/case/:id/plan" element={<CasePlan />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/casenotes" element={<CaseNoteSettings />} />
           <Route path="/archive" element={<Archive />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

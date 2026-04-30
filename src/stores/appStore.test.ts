@@ -200,4 +200,151 @@ describe('appStore', () => {
       expect(useAppStore.getState().error).toMatch('load failed');
     });
   });
+
+  describe('updateCaseStage', () => {
+    const mockCase = {
+      id: 1,
+      name: 'Test Case',
+      client_name: 'John Doe',
+      stage: 'Intake',
+      status: 'active',
+      created_at: '2024-01-01',
+      updated_at: '2024-01-01',
+    };
+
+    it('updates case stage in state on success', async () => {
+      const updatedCase = { ...mockCase, stage: 'Assessment' };
+      vi.mocked(invoke).mockResolvedValueOnce(updatedCase);
+      useAppStore.setState({ cases: [mockCase] });
+      const { updateCaseStage } = useAppStore.getState();
+
+      await act(async () => {
+        await updateCaseStage(1, 'Assessment');
+      });
+
+      expect(invoke).toHaveBeenCalledWith('update_case_stage', { caseId: 1, stage: 'Assessment' });
+      expect(useAppStore.getState().cases.find((c) => c.id === 1)?.stage).toBe('Assessment');
+    });
+
+    it('sets error on failure', async () => {
+      vi.mocked(invoke).mockRejectedValueOnce(new Error('update failed'));
+      const { updateCaseStage } = useAppStore.getState();
+
+      await act(async () => {
+        try {
+          await updateCaseStage(1, 'Review');
+        } catch {}
+      });
+
+      expect(useAppStore.getState().error).toMatch('update failed');
+    });
+  });
+
+  describe('deleteCase', () => {
+    const mockCases = [
+      { id: 1, name: 'Case 1', client_name: 'John', stage: 'Intake', status: 'active', created_at: '2024-01-01', updated_at: '2024-01-01' },
+      { id: 2, name: 'Case 2', client_name: 'Jane', stage: 'Intake', status: 'active', created_at: '2024-01-02', updated_at: '2024-01-02' },
+    ];
+
+    it('removes case from state on success', async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(undefined);
+      useAppStore.setState({ cases: [...mockCases] });
+      const { deleteCase } = useAppStore.getState();
+
+      await act(async () => {
+        await deleteCase(1);
+      });
+
+      expect(invoke).toHaveBeenCalledWith('delete_case', { caseId: 1 });
+      const remaining = useAppStore.getState().cases;
+      expect(remaining.map((c) => c.id)).not.toContain(1);
+      expect(remaining.map((c) => c.id)).toContain(2);
+    });
+
+    it('clears selectedCaseId if deleted case was selected', async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(undefined);
+      useAppStore.setState({ cases: [mockCases[0]], selectedCaseId: 1 });
+      const { deleteCase } = useAppStore.getState();
+
+      await act(async () => {
+        await deleteCase(1);
+      });
+
+      expect(useAppStore.getState().selectedCaseId).toBeNull();
+    });
+
+    it('does not clear selectedCaseId if deleted case was not selected', async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(undefined);
+      useAppStore.setState({ cases: [...mockCases], selectedCaseId: 2 });
+      const { deleteCase } = useAppStore.getState();
+
+      await act(async () => {
+        await deleteCase(1);
+      });
+
+      expect(useAppStore.getState().selectedCaseId).toBe(2);
+    });
+
+    it('sets error on failure', async () => {
+      vi.mocked(invoke).mockRejectedValueOnce(new Error('delete failed'));
+      const { deleteCase } = useAppStore.getState();
+
+      await act(async () => {
+        try {
+          await deleteCase(99);
+        } catch {}
+      });
+
+      expect(useAppStore.getState().error).toMatch('delete failed');
+    });
+  });
+
+  describe('settings', () => {
+    it('has llm_note_prompt in initial settings', () => {
+      const state = useAppStore.getState();
+      expect(state.settings.llm_note_prompt).toBeTruthy();
+      expect(typeof state.settings.llm_note_prompt).toBe('string');
+    });
+
+    it('saveSettings includes llm_note_prompt', async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(undefined);
+      const { saveSettings } = useAppStore.getState();
+
+      const settings = {
+        llm_provider: 'ollama',
+        llm_endpoint: 'http://localhost:11434/v1/chat/completions',
+        llm_api_key: '',
+        llm_model: 'llama3.2',
+        redaction_list: ['Test'],
+        llm_note_prompt: 'Custom prompt',
+      };
+
+      await act(async () => {
+        await saveSettings(settings);
+      });
+
+      expect(invoke).toHaveBeenCalledWith('save_settings', { settings });
+    });
+
+    it('loadSettings loads llm_note_prompt from backend', async () => {
+      const mockSettings = {
+        llm_provider: 'openai',
+        llm_endpoint: 'https://api.openai.com/v1/chat/completions',
+        llm_api_key: 'sk-test',
+        llm_model: 'gpt-4o-mini',
+        redaction_list: ['Name'],
+        llm_note_prompt: 'My custom prompt',
+      };
+      vi.mocked(invoke).mockResolvedValueOnce(mockSettings);
+      const { loadSettings } = useAppStore.getState();
+
+      await act(async () => {
+        await loadSettings();
+      });
+
+      const settings = useAppStore.getState().settings;
+      expect(settings.llm_note_prompt).toBe('My custom prompt');
+      expect(settings.llm_provider).toBe('openai');
+    });
+  });
 });

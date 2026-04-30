@@ -39,6 +39,7 @@ export interface AppSettings {
   llm_api_key: string;
   llm_model: string;
   redaction_list: string[];
+  llm_note_prompt: string;
 }
 
 export interface TodoistTask {
@@ -74,6 +75,8 @@ interface AppState {
   loadCases: () => Promise<void>;
   selectCase: (caseId: number | null) => void;
   createCase: (name: string, clientName: string, stage: string) => Promise<Case>;
+  updateCaseStage: (caseId: number, stage: string) => Promise<Case>;
+  deleteCase: (caseId: number) => Promise<void>;
   loadNotes: (caseId: number) => Promise<void>;
   saveNote: (caseId: number, rawContent: string, draftContent?: string) => Promise<void>;
   draftNote: (rawInput: string, anonymize: boolean) => Promise<string>;
@@ -101,7 +104,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     llm_endpoint: 'http://localhost:11434/v1/chat/completions',
     llm_api_key: '',
     llm_model: 'llama3.2',
-    redaction_list: ['[REDACTED NAME]', '[REDACTED ORG]', '[REDACTED LOCATION]'],
+    redaction_list: [],
+    llm_note_prompt: 'You are a social worker assistant helping to draft case notes. Given the raw observations below, write a professional, structured case note. Use clear headings and bullet points where appropriate. Focus on facts, observations, and actions taken.',
   },
   todoistPanelOpen: true,
   todoistTasks: [],
@@ -138,6 +142,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       return newCase;
     } catch (e) {
       set({ error: String(e), isLoading: false });
+      throw e;
+    }
+  },
+
+  updateCaseStage: async (caseId, stage) => {
+    try {
+      const updated = await invoke<Case>('update_case_stage', { caseId, stage });
+      set((state) => ({
+        cases: state.cases.map((c) => (c.id === caseId ? updated : c)),
+      }));
+      return updated;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  deleteCase: async (caseId) => {
+    try {
+      await invoke('delete_case', { caseId });
+      set((state) => ({
+        cases: state.cases.filter((c) => c.id !== caseId),
+        selectedCaseId: state.selectedCaseId === caseId ? null : state.selectedCaseId,
+      }));
+    } catch (e) {
+      set({ error: String(e) });
       throw e;
     }
   },

@@ -1,45 +1,29 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAppStore, AppSettings } from '../stores/appStore';
+import { useAppStore } from '../stores/appStore';
 
-export function Settings() {
+export function CaseNoteSettings() {
   const navigate = useNavigate();
   const { settings, saveSettings, isLoading, error, setError } = useAppStore();
 
-  const [form, setForm] = useState<AppSettings>({ ...settings, llm_note_prompt: settings.llm_note_prompt || 'You are a social worker assistant helping to draft case notes. Given the raw observations below, write a professional, structured case note. Use clear headings and bullet points where appropriate. Focus on facts, observations, and actions taken.' });
+  const [form, setForm] = useState({
+    redaction_list: [...settings.redaction_list],
+    llm_note_prompt: settings.llm_note_prompt,
+  });
   const [showSuccess, setShowSuccess] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
 
   const handleSave = async () => {
     try {
-      await saveSettings(form);
+      await saveSettings({
+        ...settings,
+        redaction_list: form.redaction_list,
+        llm_note_prompt: form.llm_note_prompt,
+      });
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (e) {
       setError(String(e));
     }
-  };
-
-  const handleProviderChange = (provider: string) => {
-    let endpoint = form.llm_endpoint;
-    let model = form.llm_model;
-
-    switch (provider) {
-      case 'ollama':
-        endpoint = 'http://localhost:11434/v1/chat/completions';
-        model = 'llama3.2';
-        break;
-      case 'openai':
-        endpoint = 'https://api.openai.com/v1/chat/completions';
-        model = 'gpt-4o-mini';
-        break;
-      case 'anthropic':
-        endpoint = 'https://api.anthropic.com/v1/messages';
-        model = 'claude-sonnet-4-20250514';
-        break;
-    }
-
-    setForm({ ...form, llm_provider: provider, llm_endpoint: endpoint, llm_model: model });
   };
 
   const addRedactionTerm = () => {
@@ -72,7 +56,7 @@ export function Settings() {
             <path d="M12 4L6 10l6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
-        <h2 style={{ fontSize: '24px', fontWeight: 600 }}>Settings</h2>
+        <h2 style={{ fontSize: '24px', fontWeight: 600 }}>Case Note Settings</h2>
       </div>
 
       {error && (
@@ -88,81 +72,18 @@ export function Settings() {
 
       <div style={{ maxWidth: '600px' }}>
         <section style={{ marginBottom: '32px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>LLM Provider</h3>
-
+          <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>LLM Note Prompt</h3>
+          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '16px' }}>
+            Customize the prompt sent to the LLM when drafting case notes. Use {"{raw_input}"} as a placeholder for the observations.
+          </p>
           <div className="form-group">
-            <label className="form-label">Provider</label>
-            <select
-              className="input"
-              value={form.llm_provider}
-              onChange={(e) => handleProviderChange(e.target.value)}
-            >
-              <option value="ollama">Ollama (Local)</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="custom">Custom Endpoint</option>
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Endpoint URL</label>
-            <input
-              type="text"
-              className="input"
-              value={form.llm_endpoint}
-              onChange={(e) => setForm({ ...form, llm_endpoint: e.target.value })}
-              placeholder="http://localhost:11434/v1/chat/completions"
+            <textarea
+              className="textarea"
+              value={form.llm_note_prompt}
+              onChange={(e) => setForm({ ...form, llm_note_prompt: e.target.value })}
+              rows={6}
+              style={{ fontSize: '13px' }}
             />
-            <p className="form-hint">
-              For Ollama, use {" "}
-              <code style={{ fontSize: '12px', background: 'var(--color-bg)', padding: '2px 4px', borderRadius: '4px' }}>
-                http://localhost:11434/v1/chat/completions
-              </code>
-            </p>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Model</label>
-            <input
-              type="text"
-              className="input"
-              value={form.llm_model}
-              onChange={(e) => setForm({ ...form, llm_model: e.target.value })}
-              placeholder="llama3.2"
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">API Key</label>
-            <div style={{ position: 'relative' }}>
-              <input
-                type={showApiKey ? 'text' : 'password'}
-                className="input"
-                value={form.llm_api_key}
-                onChange={(e) => setForm({ ...form, llm_api_key: e.target.value })}
-                placeholder={form.llm_provider === 'ollama' ? 'Leave empty for local Ollama' : 'Enter API key'}
-                style={{ paddingRight: '40px' }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowApiKey(!showApiKey)}
-                style={{
-                  position: 'absolute',
-                  right: '8px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: 'var(--color-text-muted)',
-                }}
-              >
-                {showApiKey ? 'Hide' : 'Show'}
-              </button>
-            </div>
-            {form.llm_provider === 'ollama' && (
-              <p className="form-hint">No API key needed for local Ollama</p>
-            )}
           </div>
         </section>
 
@@ -220,22 +141,6 @@ export function Settings() {
           )}
         </section>
 
-        <section style={{ marginBottom: '32px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>LLM Note Prompt</h3>
-          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '16px' }}>
-            Customize the prompt sent to the LLM when drafting case notes.
-          </p>
-          <div className="form-group">
-            <textarea
-              className="textarea"
-              value={form.llm_note_prompt}
-              onChange={(e) => setForm({ ...form, llm_note_prompt: e.target.value })}
-              rows={5}
-              style={{ fontSize: '13px' }}
-            />
-          </div>
-        </section>
-
         <div style={{ display: 'flex', gap: '12px' }}>
           <button
             className="btn btn-primary"
@@ -246,7 +151,7 @@ export function Settings() {
           </button>
           <button
             className="btn btn-secondary"
-            onClick={() => setForm({ ...settings, llm_note_prompt: settings.llm_note_prompt || '' })}
+            onClick={() => navigate(-1)}
           >
             Cancel
           </button>

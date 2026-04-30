@@ -46,18 +46,17 @@ pub fn apply_redaction(input: &str, redaction_list: &[String]) -> String {
 pub async fn draft_note(
     state: &AppState,
     raw_input: &str,
+    note_prompt: &str,
 ) -> Result<String, String> {
     log::info!("Drafting case note with {} chars of input", raw_input.len());
 
     let settings = state.settings.read().await;
 
     let prompt = format!(
-        "You are a social worker assistant helping to draft case notes. \
-        Given the raw observations below, write a professional, structured case note. \
-        Use clear headings and bullet points where appropriate. \
-        Focus on facts, observations, and actions taken. \
-        \n\nRAW OBSERVATIONS:\n{}\n\n\
+        "{}\n\n\
+        RAW OBSERVATIONS:\n{}\n\n\
         DRAFTED CASE NOTE:",
+        note_prompt,
         raw_input
     );
 
@@ -81,7 +80,8 @@ pub async fn draft_note(
         log::warn!("LLM endpoint may not be localhost: {}", url);
     }
 
-    let mut req_builder = client.post(&url);
+    let mut req_builder = client.post(&url)
+        .header("Content-Type", "application/json");
 
     if !settings.llm_api_key.is_empty() && settings.llm_api_key != "ollama" {
         req_builder = req_builder.header("Authorization", format!("Bearer {}", settings.llm_api_key));
